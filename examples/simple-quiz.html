@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 Quiz de Animes</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .quiz-image {
+            width: 100%;
+            max-width: 400px;
+            height: 300px;
+            object-fit: cover;
+            border-radius: 15px;
+            margin: 30px 0;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
+        }
+
+        .question {
+            font-size: 1.5em;
+            color: #333;
+            margin: 20px 0;
+            font-weight: 600;
+        }
+
+        .options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 30px 0;
+        }
+
+        .option-btn {
+            padding: 15px 20px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            color: #333;
+        }
+
+        .option-btn:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+            transform: translateY(-2px);
+        }
+
+        .option-btn:active {
+            transform: translateY(0);
+        }
+
+        .score-section {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9ff;
+            border-radius: 10px;
+        }
+
+        .score-item {
+            text-align: center;
+        }
+
+        .score-label {
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .score-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .feedback {
+            margin: 20px 0;
+            font-size: 1.2em;
+            min-height: 30px;
+            font-weight: 600;
+        }
+
+        .feedback.correct {
+            color: #4caf50;
+        }
+
+        .feedback.incorrect {
+            color: #f44336;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 2px solid #ddd;
+        }
+
+        .btn-secondary:hover {
+            background: #efefef;
+        }
+
+        .character-info {
+            background: #f8f9ff;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            display: none;
+        }
+
+        .character-info.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .series-name {
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px 15px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .options {
+                grid-template-columns: 1fr;
+            }
+
+            .quiz-image {
+                height: 250px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Quiz de Animes</h1>
+        <p class="subtitle">Adivinhe o personagem!</p>
+
+        <div class="score-section">
+            <div class="score-item">
+                <div class="score-label">Acertos</div>
+                <div class="score-value" id="correctCount">0</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Questão</div>
+                <div class="score-value" id="questionCount">1/5</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Acurácia</div>
+                <div class="score-value" id="accuracy">0%</div>
+            </div>
+        </div>
+
+        <img id="characterImage" class="quiz-image" src="" alt="Personagem do anime">
+
+        <div class="question" id="question">Quem é este personagem?</div>
+
+        <div class="character-info" id="characterInfo">
+            <p>Série: <span class="series-name" id="seriesName"></span></p>
+        </div>
+
+        <div class="options" id="optionsContainer"></div>
+
+        <div class="feedback" id="feedback"></div>
+
+        <div class="button-group">
+            <button class="btn btn-primary" id="nextBtn" onclick="nextQuestion()" style="display: none;">Próxima</button>
+            <button class="btn btn-secondary" onclick="restartQuiz()">Reiniciar</button>
+        </div>
+    </div>
+
+    <script>
+        // Dados dos personagens
+        const characters = [
+            { name: 'Goku', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Goku.jpg', series: 'Dragon Ball' },
+            { name: 'Ichigo', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Ichigo.jpg', series: 'Bleach' },
+            { name: 'Lelouch', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Lelouch.gif', series: 'Code Geass' },
+            { name: 'SatoruGojo', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/SatoruGojo.jpg', series: 'Jujutsu Kaisen' },
+            { name: 'Vegeta', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Vegeta.jpg', series: 'Dragon Ball' },
+            { name: 'Shanks', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Shanks.jpg', series: 'One Piece' },
+            { name: 'Meruem', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Meruem.jpg', series: 'Hunter x Hunter' },
+            { name: 'Bakugou', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/Bakugou.jpg', series: 'My Hero Academia' },
+            { name: 'KanekiKen', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/KanekiKen.jpg', series: 'Tokyo Ghoul' },
+            { name: 'ZeroTwo', image: 'https://raw.githubusercontent.com/ludafcull/quiz-imagens/main/Anime/ZeroTwo.jpg', series: 'Darling in the Franxx' }
+        ];
+
+        let currentQuestionIndex = 0;
+        let correctAnswers = 0;
+        let totalQuestions = 5;
+        let answered = false;
+
+        function getRandomCharacters(count) {
+            const shuffled = [...characters].sort(() => Math.random() - 0.5);
+            return shuffled.slice(0, count);
+        }
+
+        function displayQuestion() {
+            if (currentQuestionIndex >= totalQuestions) {
+                showGameOver();
+                return;
+            }
+
+            answered = false;
+            const character = characters[currentQuestionIndex];
+            const options = getRandomCharacters(4);
+
+            if (!options.find(c => c.name === character.name)) {
+                options[0] = character;
+            }
+
+            document.getElementById('characterImage').src = character.image;
+            document.getElementById('question').textContent = 'Quem é este personagem?';
+            document.getElementById('seriesName').textContent = character.series;
+            document.getElementById('characterInfo').classList.remove('show');
+            document.getElementById('feedback').textContent = '';
+            document.getElementById('feedback').className = 'feedback';
+            document.getElementById('nextBtn').style.display = 'none';
+
+            const shuffledOptions = options.sort(() => Math.random() - 0.5);
+            const optionsContainer = document.getElementById('optionsContainer');
+            optionsContainer.innerHTML = '';
+
+            shuffledOptions.forEach(option => {
+                const btn = document.createElement('button');
+                btn.className = 'option-btn';
+                btn.textContent = option.name.replace(/([A-Z])/g, ' $1').trim();
+                btn.onclick = () => checkAnswer(option.name === character.name, character.name);
+                optionsContainer.appendChild(btn);
+            });
+
+            document.getElementById('questionCount').textContent = `${currentQuestionIndex + 1}/${totalQuestions}`;
+        }
+
+        function checkAnswer(isCorrect, correctName) {
+            if (answered) return;
+
+            answered = true;
+            const feedback = document.getElementById('feedback');
+            const characterInfo = document.getElementById('characterInfo');
+
+            if (isCorrect) {
+                correctAnswers++;
+                feedback.textContent = '✅ Correto!';
+                feedback.className = 'feedback correct';
+            } else {
+                feedback.textContent = `❌ Errado! Era ${correctName.replace(/([A-Z])/g, ' $1').trim()}`;
+                feedback.className = 'feedback incorrect';
+            }
+
+            characterInfo.classList.add('show');
+            document.getElementById('correctCount').textContent = correctAnswers;
+            document.getElementById('accuracy').textContent = Math.round((correctAnswers / (currentQuestionIndex + 1)) * 100) + '%';
+            document.getElementById('nextBtn').style.display = 'flex';
+        }
+
+        function nextQuestion() {
+            currentQuestionIndex++;
+            displayQuestion();
+        }
+
+        function showGameOver() {
+            const container = document.querySelector('.container');
+            const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
+
+            let message = '';
+            if (accuracy === 100) {
+                message = '🏆 Perfeito! Você é um mestre dos animes!';
+            } else if (accuracy >= 80) {
+                message = '🌟 Excelente! Você conhece bem seus animes!';
+            } else if (accuracy >= 60) {
+                message = '👍 Bom trabalho! Continue aprendendo!';
+            } else if (accuracy >= 40) {
+                message = '📚 Continue treinando! Você pode melhorar!';
+            } else {
+                message = '🎬 Que tal assistir mais animes?';
+            }
+
+            container.innerHTML = `
+                <h1>🎮 Resultado Final</h1>
+                <p class="subtitle">${message}</p>
+                <div class="score-section">
+                    <div class="score-item">
+                        <div class="score-label">Acertos</div>
+                        <div class="score-value">${correctAnswers}/${totalQuestions}</div>
+                    </div>
+                    <div class="score-item">
+                        <div class="score-label">Acurácia</div>
+                        <div class="score-value">${accuracy}%</div>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="location.reload()">Jogar Novamente</button>
+            `;
+        }
+
+        function restartQuiz() {
+            currentQuestionIndex = 0;
+            correctAnswers = 0;
+            answered = false;
+            displayQuestion();
+        }
+
+        // Iniciar o quiz
+        displayQuestion();
+    </script>
+</body>
+</html>
