@@ -27,7 +27,6 @@ with open(csv_path, 'r', encoding='utf-8') as f:
 
 # Categoria 1 = Character (Personagem)
 CHARACTER_CATEGORY = 1
-# Reduzindo para 0.20 para capturar detecções mais sutis
 CHARACTER_THRESHOLD = 0.20  
 
 session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
@@ -39,12 +38,12 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 def preprocess_image_exact(image_path, size=448):
-    """Pré-processamento correto para o WD EVA-02 Tagger (NCHW + Normalização)."""
+    """Pré-processamento mantendo formato NHWC [1, 448, 448, 3] esperado pelo modelo."""
     img = cv2.imread(str(image_path))
     if img is None:
         return None
 
-    # Redimensiona mantendo a proporção com padding branco
+    # Redimensiona mantendo proporção com fundo branco
     h, w = img.shape[:2]
     max_dim = max(h, w)
     padded = np.full((max_dim, max_dim, 3), 255, dtype=np.uint8)
@@ -57,18 +56,10 @@ def preprocess_image_exact(image_path, size=448):
     resized = cv2.resize(padded, (size, size), interpolation=cv2.INTER_AREA)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     
-    # Normalização em [0.0, 1.0]
-    tensor = rgb.astype(np.float32) / 255.0
+    # Converte para float32 no intervalo [0.0, 1.0]
+    tensor = rgb.astype(np.float32)
 
-    # Normalização padrão ImageNet para modelos EVA/ViT
-    mean = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
-    std = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
-    tensor = (tensor - mean) / std
-
-    # Reorganiza dimensões de (H, W, C) para (C, H, W)
-    tensor = np.transpose(tensor, (2, 0, 1))
-
-    # Adiciona dimensão do lote: (1, C, H, W)
+    # Mantém formato [1, 448, 448, 3] (NHWC)
     return np.expand_dims(tensor, axis=0)
 
 waifu_dir = Path("waifu")
@@ -95,7 +86,7 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
 
         raw_output = session.run([output_name], {input_name: tensor})[0][0]
 
-        # Aplica a função de ativação Sigmoid
+        # Aplica Sigmoid para converter em probabilidades de 0 a 1
         probs = sigmoid(raw_output)
 
         char_matches = [
