@@ -27,8 +27,8 @@ with open(csv_path, 'r', encoding='utf-8') as f:
 
 # Categoria 1 = Character (Personagem)
 CHARACTER_CATEGORY = 1
-# THRESHOLD MAIS BAIXO: Captura mais personagens sem perder muita precisão
-CHARACTER_THRESHOLD = 0.22  
+# Reduzindo para 0.20 para capturar detecções mais sutis
+CHARACTER_THRESHOLD = 0.20  
 
 session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
@@ -39,25 +39,36 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 def preprocess_image_exact(image_path, size=448):
-    """Pré-processamento BGR/RGB padronizado para o modelo WD EVA-02."""
+    """Pré-processamento correto para o WD EVA-02 Tagger (NCHW + Normalização)."""
     img = cv2.imread(str(image_path))
     if img is None:
         return None
-    
+
     # Redimensiona mantendo a proporção com padding branco
     h, w = img.shape[:2]
     max_dim = max(h, w)
     padded = np.full((max_dim, max_dim, 3), 255, dtype=np.uint8)
-    
+
     # Centraliza a imagem
     dx = (max_dim - w) // 2
     dy = (max_dim - h) // 2
     padded[dy:dy+h, dx:dx+w] = img
 
     resized = cv2.resize(padded, (size, size), interpolation=cv2.INTER_AREA)
-    # Modelo espera RGB de 0.0 a 1.0 (float32)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    tensor = rgb.astype(np.float32)
+    
+    # Normalização em [0.0, 1.0]
+    tensor = rgb.astype(np.float32) / 255.0
+
+    # Normalização padrão ImageNet para modelos EVA/ViT
+    mean = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
+    std = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+    tensor = (tensor - mean) / std
+
+    # Reorganiza dimensões de (H, W, C) para (C, H, W)
+    tensor = np.transpose(tensor, (2, 0, 1))
+
+    # Adiciona dimensão do lote: (1, C, H, W)
     return np.expand_dims(tensor, axis=0)
 
 waifu_dir = Path("waifu")
@@ -84,10 +95,8 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
 
         raw_output = session.run([output_name], {input_name: tensor})[0][0]
 
-        if np.min(raw_output) < 0.0 or np.max(raw_output) > 1.0:
-            probs = sigmoid(raw_output)
-        else:
-            probs = raw_output
+        # Aplica a função de ativação Sigmoid
+        probs = sigmoid(raw_output)
 
         char_matches = [
             (tags[i], probs[i]) for i in range(len(tags))
