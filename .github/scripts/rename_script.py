@@ -1,17 +1,16 @@
-import os
 import csv
 import subprocess
 from pathlib import Path
-
-import cv2
 import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
+from PIL import Image
 
 print("Carregando modelo Danbooru Tagger...")
 
 MODEL_REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
 
+# Download do modelo e CSV
 model_path = hf_hub_download(
     repo_id=MODEL_REPO,
     filename="model.onnx",
@@ -24,47 +23,55 @@ csv_path = hf_hub_download(
     cache_dir="./model_cache"
 )
 
-# Carrega tags + categoria (0 = geral, 4 = personagem, 9 = rating)
+# Carrega tags + categoria
+# 0 = general | 1 = character | 3 = rating | 4 = copyright
 tags = []
 categories = []
+
 with open(csv_path, 'r', encoding='utf-8') as f:
     reader = csv.DictReader(f)
     for row in reader:
         tags.append(row['name'])
         categories.append(int(row['category']))
 
-CHARACTER_CATEGORY = 4
-CHARACTER_THRESHOLD = 0.53  # threshold P=R recomendado especificamente pro eva02-large-tagger-v3
+# Configurações do Personagem
+CHARACTER_CATEGORY = 1  # 1 é a categoria correta para Personagem
+CHARACTER_THRESHOLD = 0.50  # Probabilidade mínima para considerar
 
-session = ort.InferenceSession(model_path)
+# Inicializa ONNX Runtime
+session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
 output_name = session.get_outputs()[0].name
+target_size = 448
 
-input_shape = session.get_inputs()[0].shape
-target_size = input_shape[1] if isinstance(input_shape[1], int) else 448
+# Parâmetros de normalização ImageNet
+MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def preprocess_image(image_path, size=448):
+    """Abre em RGB, redimensiona e aplica normalização padrão."""
+    img = Image.open(image_path).convert("RGB")
+    
+    # Redimensiona mantendo proporção com padding
+    img.thumbnail((size, size), Image.BICUBIC)
+    new_img = Image.new("RGB", (size, size), (255, 255, 255))
+    new_img.paste(img, ((size - img.width) // 2, (size - img.height) // 2))
+    
+    # Normalização
+    arr = np.array(new_img, dtype=np.float32) / 255.0
+    arr = (arr - MEAN) / STD
+    tensor = np.expand_dims(arr, axis=0)
+    return tensor
 
 waifu_dir = Path("waifu")
 renamed_count = 0
 
 print("=" * 60)
-print("Processando com Danbooru Tagger...")
+print("Processando imagens...")
 print("=" * 60)
-
-
-def preprocess(image_bgr, size):
-    """Redimensiona com padding quadrado e monta o tensor NHWC em BGR
-    (formato e ordem de cor que o modelo espera - sem converter pra RGB)."""
-    h, w = image_bgr.shape[:2]
-    side = max(h, w)
-    padded = np.zeros((side, side, 3), dtype=np.uint8)
-    padded[(side - h) // 2:(side - h) // 2 + h,
-           (side - w) // 2:(side - w) // 2 + w] = image_bgr
-
-    resized = cv2.resize(padded, (size, size), interpolation=cv2.INTER_AREA)
-    tensor = resized.astype(np.float32)
-    tensor = np.expand_dims(tensor, axis=0)  # (1, size, size, 3) - NHWC, BGR
-    return tensor
-
 
 for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
     if not image_file.is_file():
@@ -78,35 +85,31 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
     print(f"[{idx}] {old_name}")
 
     try:
-        image = cv2.imread(str(image_file))
-        if image is None:
-            print("    Nao foi possivel ler a imagem")
-            continue
+        tensor = preprocess_image(image_file, target_size)
+        logits = session.run([output_name], {input_name: tensor})[0][0]
+        probs = sigmoid(logits)  # Converte logits para probabilidades (0.0 a 1.0)
 
-        tensor = preprocess(image, target_size)
-        output = session.run([output_name], {input_name: tensor})[0][0]
-
-        character_tags = [
-            tags[i] for i in range(len(tags))
-            if categories[i] == CHARACTER_CATEGORY and output[i] > CHARACTER_THRESHOLD
+        # Filtra apenas tags da categoria Personagem (categoria 1) acima do threshold
+        char_matches = [
+            (tags[i], probs[i]) for i in range(len(tags))
+            if categories[i] == CHARACTER_CATEGORY and probs[i] >= CHARACTER_THRESHOLD
         ]
 
-        if not character_tags:
-            # Sem tag de personagem confiavel: nao renomeia (evita nome enganoso
-            # tipo "1girl"). A imagem fica com o nome original pra revisao manual.
-            print("    Personagem nao identificado - mantendo nome original")
+        if not char_matches:
+            print("    Nenhum personagem identificado acima do limite.")
             continue
 
-        char_indices = [i for i in range(len(tags)) if categories[i] == CHARACTER_CATEGORY]
-        best_idx = max(char_indices, key=lambda i: output[i])
-        character_name = tags[best_idx]
-        print(f"    Tags de personagem: {character_tags}")
+        # Seleciona o personagem com maior probabilidade
+        char_matches.sort(key=lambda x: x[1], reverse=True)
+        best_character, score = char_matches[0]
+        print(f"    Personagem detectado: {best_character} ({score:.2%})")
 
-        clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in character_name)
+        # Limpa o nome para salvar no sistema de arquivos
+        clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in best_character)
         clean_name = clean_name[:50]
 
         if len(clean_name) < 2:
-            print("    Nome invalido")
+            print("    Nome limpo é inválido.")
             continue
 
         new_name = f"{clean_name}{ext}"
@@ -124,13 +127,14 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
         renamed_count += 1
 
     except Exception as e:
-        print(f"    Erro: {e}")
+        print(f"    Erro ao processar: {e}")
         continue
 
 print("=" * 60)
-print(f"Total renomeados: {renamed_count}")
+print(f"Total renomeados com sucesso: {renamed_count}")
 print("=" * 60)
 
+# Commit Git
 result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
 
 if result.stdout.strip():
@@ -138,6 +142,6 @@ if result.stdout.strip():
     subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
     subprocess.run(["git", "commit", "-m", f"Danbooru Tagger: {renamed_count} personagens identificados"], check=True)
     subprocess.run(["git", "push"], check=True)
-    print("Commit realizado!")
+    print("Commit e Push realizados!")
 else:
-    print("Nenhuma mudanca")
+    print("Nenhuma alteração a ser enviada.")
