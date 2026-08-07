@@ -1,0 +1,151 @@
+name: Auto Rename Waifu Images with AI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'waifu/**'
+    branches:
+      - main
+
+jobs:
+  rename-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pillow requests torch torchvision transformers huggingface-hub gitpython
+
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
+      - name: Identify and rename images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import os
+          import subprocess
+          import json
+          from pathlib import Path
+          from transformers import pipeline
+          from PIL import Image
+          import requests
+
+          # Inicializar modelo de detecção
+          print("🤖 Carregando modelo de IA...")
+          classifier = pipeline("image-classification", 
+                              model="Falconsai/nsfw_image_detection")
+
+          waifu_dir = Path("waifu")
+          renamed_count = 0
+          
+          # Processar cada arquivo
+          for image_file in sorted(waifu_dir.glob("*")):
+              if not image_file.is_file():
+                  continue
+              
+              ext = image_file.suffix.lower()
+              if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                  continue
+              
+              old_name = image_file.name
+              print(f"\n📸 Processando: {old_name}")
+              
+              try:
+                  # Tentar usar IA para identificar personagem
+                  # Usando BLIP para captioning
+                  from transformers import BlipProcessor, BlipForConditionalGeneration
+                  
+                  processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+                  model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+                  
+                  raw_image = Image.open(image_file).convert('RGB')
+                  
+                  # Prompt para identificar personagem de anime
+                  inputs = processor(raw_image, "identify anime character:", return_tensors="pt")
+                  out = model.generate(**inputs, max_length=100)
+                  caption = processor.decode(out[0], skip_special_tokens=True)
+                  
+                  print(f"   IA identificou: {caption}")
+                  
+                  # Tentar extrair nome do personagem
+                  # Limpar caption e usar como novo nome
+                  character_name = caption.replace("identify anime character:", "").strip()
+                  
+                  if not character_name or character_name.lower() in ["anime character", "unknown"]:
+                      print(f"   ⚠️ Não identificado, mantendo nome original")
+                      continue
+                  
+                  # Limpar nome para uso em arquivo
+                  clean_name = "".join(c if c.isalnum() or c in ('-', '_', ' ') else '' 
+                                      for c in character_name).strip()
+                  clean_name = clean_name.replace(" ", "_")[:50]  # Limitar tamanho
+                  
+                  new_name = f"{clean_name}{ext}"
+                  new_path = waifu_dir / new_name
+                  
+                  # Evitar duplicatas
+                  if new_path.exists() and new_path != image_file:
+                      counter = 1
+                      base_name = clean_name
+                      while new_path.exists():
+                          new_name = f"{base_name}_{counter}{ext}"
+                          new_path = waifu_dir / new_name
+                          counter += 1
+                  
+                  # Renomear usando Git
+                  subprocess.run(
+                      ["git", "mv", str(image_file), str(new_path)],
+                      check=True,
+                      cwd="."
+                  )
+                  
+                  print(f"   ✅ Renomeado para: {new_name}")
+                  renamed_count += 1
+                  
+              except Exception as e:
+                  print(f"   ❌ Erro ao processar: {str(e)}")
+                  continue
+          
+          print(f"\n{'='*50}")
+          print(f"✨ Total renomeados: {renamed_count}")
+          print(f"{'='*50}")
+          
+          # Fazer commit se houver mudanças
+          result = subprocess.run(["git", "status", "--porcelain"], 
+                                capture_output=True, text=True)
+          
+          if result.stdout.strip():
+              subprocess.run(["git", "config", "user.name", "bot-renamer"], check=True)
+              subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
+              subprocess.run(["git", "commit", "-m", 
+                            f"🤖 Auto-rename: {renamed_count} imagens de anime identificadas"],
+                            check=True)
+              subprocess.run(["git", "push"], check=True)
+              print("✅ Push realizado com sucesso!")
+          else:
+              print("ℹ️ Nenhuma mudança para fazer commit")
+          
+          EOF
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## 🤖 Renaming Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Images in waifu folder have been processed and renamed based on AI identification." >> $GITHUB_STEP_SUMMARY
