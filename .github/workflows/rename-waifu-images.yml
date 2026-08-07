@@ -1,4 +1,4 @@
-name: Auto Rename Waifu Images with AI
+name: Auto Rename Waifu Images - Better AI
 
 on:
   workflow_dispatch:
@@ -29,34 +29,33 @@ jobs:
         run: |
           pip install pillow requests torch torchvision transformers huggingface-hub gitpython
 
-      - name: Install Git LFS
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git-lfs
-
-      - name: Identify and rename images
+      - name: Identify and rename anime characters
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 << 'EOF'
           import os
           import subprocess
-          import json
           from pathlib import Path
-          from transformers import pipeline
           from PIL import Image
-          import requests
-
-          # Inicializar modelo de detecção
-          print("🤖 Carregando modelo de IA...")
-          classifier = pipeline("image-classification", 
-                              model="Falconsai/nsfw_image_detection")
-
+          from transformers import pipeline
+          
+          print("🤖 Carregando modelo de IA BLIP para captions de anime...")
+          
           waifu_dir = Path("waifu")
           renamed_count = 0
           
-          # Processar cada arquivo
-          for image_file in sorted(waifu_dir.glob("*")):
+          # Usar BLIP para gerar captions melhores
+          from transformers import BlipProcessor, BlipForConditionalGeneration
+          
+          processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+          model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+          
+          print(f"\n{'='*60}")
+          print(f"Processando imagens da pasta: {waifu_dir}")
+          print(f"{'='*60}\n")
+          
+          for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
               if not image_file.is_file():
                   continue
               
@@ -65,37 +64,37 @@ jobs:
                   continue
               
               old_name = image_file.name
-              print(f"\n📸 Processando: {old_name}")
+              print(f"[{idx}] 📸 {old_name}")
               
               try:
-                  # Tentar usar IA para identificar personagem
-                  # Usando BLIP para captioning
-                  from transformers import BlipProcessor, BlipForConditionalGeneration
-                  
-                  processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-                  model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-                  
+                  # Carregar imagem
                   raw_image = Image.open(image_file).convert('RGB')
                   
-                  # Prompt para identificar personagem de anime
-                  inputs = processor(raw_image, "identify anime character:", return_tensors="pt")
-                  out = model.generate(**inputs, max_length=100)
-                  caption = processor.decode(out[0], skip_special_tokens=True)
+                  # Gerar caption com prompt específico para anime
+                  inputs = processor(raw_image, "who is this anime character:", return_tensors="pt")
+                  generated_ids = model.generate(**inputs, max_length=50)
+                  caption = processor.decode(generated_ids[0], skip_special_tokens=True).strip()
                   
-                  print(f"   IA identificou: {caption}")
+                  print(f"    Caption: {caption}")
                   
-                  # Tentar extrair nome do personagem
-                  # Limpar caption e usar como novo nome
-                  character_name = caption.replace("identify anime character:", "").strip()
+                  # Extrair apenas o nome do personagem (após o prompt)
+                  character_name = caption.replace("who is this anime character:", "").strip()
                   
-                  if not character_name or character_name.lower() in ["anime character", "unknown"]:
-                      print(f"   ⚠️ Não identificado, mantendo nome original")
+                  # Remover palavras genéricas
+                  generic_words = ["character", "anime", "person", "woman", "man", "girl", "boy", "the", "a", "an"]
+                  for word in generic_words:
+                      character_name = character_name.replace(f" {word}", "").replace(f"{word} ", "").strip()
+                  
+                  character_name = character_name.strip()
+                  
+                  # Se vazio, ignorar
+                  if not character_name or len(character_name) < 2:
+                      print(f"    ⚠️ Não identificado\n")
                       continue
                   
-                  # Limpar nome para uso em arquivo
-                  clean_name = "".join(c if c.isalnum() or c in ('-', '_', ' ') else '' 
-                                      for c in character_name).strip()
-                  clean_name = clean_name.replace(" ", "_")[:50]  # Limitar tamanho
+                  # Limpar nome
+                  clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in character_name)
+                  clean_name = clean_name[:50]
                   
                   new_name = f"{clean_name}{ext}"
                   new_path = waifu_dir / new_name
@@ -103,49 +102,41 @@ jobs:
                   # Evitar duplicatas
                   if new_path.exists() and new_path != image_file:
                       counter = 1
-                      base_name = clean_name
                       while new_path.exists():
-                          new_name = f"{base_name}_{counter}{ext}"
+                          new_name = f"{clean_name}_{counter}{ext}"
                           new_path = waifu_dir / new_name
                           counter += 1
                   
-                  # Renomear usando Git
-                  subprocess.run(
-                      ["git", "mv", str(image_file), str(new_path)],
-                      check=True,
-                      cwd="."
-                  )
+                  # Renomear com Git
+                  subprocess.run(["git", "mv", str(image_file), str(new_path)], check=True)
                   
-                  print(f"   ✅ Renomeado para: {new_name}")
+                  print(f"    ✅ Renomeado para: {new_name}\n")
                   renamed_count += 1
                   
               except Exception as e:
-                  print(f"   ❌ Erro ao processar: {str(e)}")
+                  print(f"    ❌ Erro: {e}\n")
                   continue
           
-          print(f"\n{'='*50}")
-          print(f"✨ Total renomeados: {renamed_count}")
-          print(f"{'='*50}")
+          print(f"\n{'='*60}")
+          print(f"✅ Renomeados: {renamed_count}")
+          print(f"{'='*60}\n")
           
-          # Fazer commit se houver mudanças
-          result = subprocess.run(["git", "status", "--porcelain"], 
-                                capture_output=True, text=True)
+          # Fazer commit
+          result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
           
           if result.stdout.strip():
-              subprocess.run(["git", "config", "user.name", "bot-renamer"], check=True)
+              subprocess.run(["git", "config", "user.name", "anime-bot"], check=True)
               subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
-              subprocess.run(["git", "commit", "-m", 
-                            f"🤖 Auto-rename: {renamed_count} imagens de anime identificadas"],
-                            check=True)
+              subprocess.run(["git", "commit", "-m", f"🤖 Auto-rename: {renamed_count} anime characters identified"], check=True)
               subprocess.run(["git", "push"], check=True)
-              print("✅ Push realizado com sucesso!")
+              print("✅ Commit e push realizados!")
           else:
-              print("ℹ️ Nenhuma mudança para fazer commit")
+              print("ℹ️ Nenhuma mudança")
           
           EOF
 
-      - name: Create summary
+      - name: Workflow Summary
         if: always()
         run: |
-          echo "## 🤖 Renaming Complete" >> $GITHUB_STEP_SUMMARY
-          echo "Images in waifu folder have been processed and renamed based on AI identification." >> $GITHUB_STEP_SUMMARY
+          echo "## 🤖 Auto Rename Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Anime characters have been identified and renamed!" >> $GITHUB_STEP_SUMMARY
