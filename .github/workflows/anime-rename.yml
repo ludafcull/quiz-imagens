@@ -1,0 +1,124 @@
+name: Rename Anime Characters
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'waifu/**'
+    branches:
+      - main
+
+jobs:
+  rename-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pillow requests torch torchvision transformers huggingface-hub gitpython
+
+      - name: Identify and rename anime characters
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import os
+          import subprocess
+          from pathlib import Path
+          from PIL import Image
+          from transformers import BlipProcessor, BlipForConditionalGeneration
+          
+          print("🤖 Carregando modelo BLIP...")
+          
+          waifu_dir = Path("waifu")
+          renamed_count = 0
+          
+          processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+          model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+          
+          print(f"\n{'='*60}")
+          print(f"Processando imagens...")
+          print(f"{'='*60}\n")
+          
+          for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
+              if not image_file.is_file():
+                  continue
+              
+              ext = image_file.suffix.lower()
+              if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                  continue
+              
+              old_name = image_file.name
+              print(f"[{idx}] 📸 {old_name}")
+              
+              try:
+                  raw_image = Image.open(image_file).convert('RGB')
+                  
+                  inputs = processor(raw_image, "who is this anime character:", return_tensors="pt")
+                  generated_ids = model.generate(**inputs, max_length=50)
+                  caption = processor.decode(generated_ids[0], skip_special_tokens=True).strip()
+                  
+                  print(f"    Caption: {caption}")
+                  
+                  character_name = caption.replace("who is this anime character:", "").strip()
+                  
+                  generic_words = ["character", "anime", "person", "woman", "man", "girl", "boy", "the", "a", "an"]
+                  for word in generic_words:
+                      character_name = character_name.replace(f" {word}", "").replace(f"{word} ", "").strip()
+                  
+                  character_name = character_name.strip()
+                  
+                  if not character_name or len(character_name) < 2:
+                      print(f"    ⚠️ Não identificado\n")
+                      continue
+                  
+                  clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in character_name)
+                  clean_name = clean_name[:50]
+                  
+                  new_name = f"{clean_name}{ext}"
+                  new_path = waifu_dir / new_name
+                  
+                  if new_path.exists() and new_path != image_file:
+                      counter = 1
+                      while new_path.exists():
+                          new_name = f"{clean_name}_{counter}{ext}"
+                          new_path = waifu_dir / new_name
+                          counter += 1
+                  
+                  subprocess.run(["git", "mv", str(image_file), str(new_path)], check=True)
+                  
+                  print(f"    ✅ Renomeado para: {new_name}\n")
+                  renamed_count += 1
+                  
+              except Exception as e:
+                  print(f"    ❌ Erro: {e}\n")
+                  continue
+          
+          print(f"\n{'='*60}")
+          print(f"✅ Renomeados: {renamed_count}")
+          print(f"{'='*60}\n")
+          
+          result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+          
+          if result.stdout.strip():
+              subprocess.run(["git", "config", "user.name", "anime-bot"], check=True)
+              subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
+              subprocess.run(["git", "commit", "-m", f"🤖 Auto-rename: {renamed_count} personagens identificados"], check=True)
+              subprocess.run(["git", "push"], check=True)
+              print("✅ Push realizado!")
+          else:
+              print("ℹ️ Nenhuma mudança")
+          
+          EOF
