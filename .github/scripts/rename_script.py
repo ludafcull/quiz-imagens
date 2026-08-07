@@ -4,13 +4,15 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
-from PIL import Image
+from PIL import Image, ImageFile
+
+# Permite carregar imagens JPG levemente incompletas ou corrompidas
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 print("Carregando modelo Danbooru Tagger...")
 
 MODEL_REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
 
-# Download do modelo e CSV
 model_path = hf_hub_download(
     repo_id=MODEL_REPO,
     filename="model.onnx",
@@ -23,8 +25,6 @@ csv_path = hf_hub_download(
     cache_dir="./model_cache"
 )
 
-# Carrega tags + categoria
-# 0 = general | 1 = character | 3 = rating | 4 = copyright
 tags = []
 categories = []
 
@@ -34,17 +34,15 @@ with open(csv_path, 'r', encoding='utf-8') as f:
         tags.append(row['name'])
         categories.append(int(row['category']))
 
-# Configurações do Personagem
-CHARACTER_CATEGORY = 1  # 1 é a categoria correta para Personagem
-CHARACTER_THRESHOLD = 0.50  # Probabilidade mínima para considerar
+# Categoria 1 = Character (Personagem)
+CHARACTER_CATEGORY = 1
+CHARACTER_THRESHOLD = 0.35  # Threshold ajustado para melhor detecção
 
-# Inicializa ONNX Runtime
 session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
 output_name = session.get_outputs()[0].name
 target_size = 448
 
-# Parâmetros de normalização ImageNet
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
@@ -52,15 +50,11 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 def preprocess_image(image_path, size=448):
-    """Abre em RGB, redimensiona e aplica normalização padrão."""
     img = Image.open(image_path).convert("RGB")
-    
-    # Redimensiona mantendo proporção com padding
     img.thumbnail((size, size), Image.BICUBIC)
     new_img = Image.new("RGB", (size, size), (255, 255, 255))
     new_img.paste(img, ((size - img.width) // 2, (size - img.height) // 2))
     
-    # Normalização
     arr = np.array(new_img, dtype=np.float32) / 255.0
     arr = (arr - MEAN) / STD
     tensor = np.expand_dims(arr, axis=0)
@@ -73,12 +67,10 @@ print("=" * 60)
 print("Processando imagens...")
 print("=" * 60)
 
-for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
-    if not image_file.is_file():
-        continue
+valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
 
-    ext = image_file.suffix.lower()
-    if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
+    if not image_file.is_file() or image_file.suffix.lower() not in valid_exts:
         continue
 
     old_name = image_file.name
@@ -86,10 +78,14 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
 
     try:
         tensor = preprocess_image(image_file, target_size)
-        logits = session.run([output_name], {input_name: tensor})[0][0]
-        probs = sigmoid(logits)  # Converte logits para probabilidades (0.0 a 1.0)
+        raw_output = session.run([output_name], {input_name: tensor})[0][0]
 
-        # Filtra apenas tags da categoria Personagem (categoria 1) acima do threshold
+        # Verifica se precisa aplicar o sigmoide ou se já é probabilidade
+        if np.min(raw_output) < 0.0 or np.max(raw_output) > 1.0:
+            probs = sigmoid(raw_output)
+        else:
+            probs = raw_output
+
         char_matches = [
             (tags[i], probs[i]) for i in range(len(tags))
             if categories[i] == CHARACTER_CATEGORY and probs[i] >= CHARACTER_THRESHOLD
@@ -99,19 +95,18 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
             print("    Nenhum personagem identificado acima do limite.")
             continue
 
-        # Seleciona o personagem com maior probabilidade
         char_matches.sort(key=lambda x: x[1], reverse=True)
         best_character, score = char_matches[0]
         print(f"    Personagem detectado: {best_character} ({score:.2%})")
 
-        # Limpa o nome para salvar no sistema de arquivos
         clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in best_character)
         clean_name = clean_name[:50]
 
         if len(clean_name) < 2:
-            print("    Nome limpo é inválido.")
+            print("    Nome invalido.")
             continue
 
+        ext = image_file.suffix.lower()
         new_name = f"{clean_name}{ext}"
         new_path = waifu_dir / new_name
 
@@ -134,14 +129,12 @@ print("=" * 60)
 print(f"Total renomeados com sucesso: {renamed_count}")
 print("=" * 60)
 
-# Commit Git
-result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-
-if result.stdout.strip():
+# Só tenta comitar se algo tiver sido alterado pelo git mv
+if renamed_count > 0:
     subprocess.run(["git", "config", "user.name", "danbooru-bot"], check=True)
     subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
     subprocess.run(["git", "commit", "-m", f"Danbooru Tagger: {renamed_count} personagens identificados"], check=True)
     subprocess.run(["git", "push"], check=True)
-    print("Commit e Push realizados!")
+    print("Commit e Push realizados com sucesso!")
 else:
-    print("Nenhuma alteração a ser enviada.")
+    print("Nenhum arquivo foi renomeado. Pulando commit.")
