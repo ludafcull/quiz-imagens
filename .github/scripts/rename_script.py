@@ -10,14 +10,16 @@ from huggingface_hub import hf_hub_download
 
 print("Carregando modelo Danbooru Tagger...")
 
+MODEL_REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
+
 model_path = hf_hub_download(
-    repo_id="SmilingWolf/wd-v1-4-convnext-tagger-v2",
+    repo_id=MODEL_REPO,
     filename="model.onnx",
     cache_dir="./model_cache"
 )
 
 csv_path = hf_hub_download(
-    repo_id="SmilingWolf/wd-v1-4-convnext-tagger-v2",
+    repo_id=MODEL_REPO,
     filename="selected_tags.csv",
     cache_dir="./model_cache"
 )
@@ -32,8 +34,7 @@ with open(csv_path, 'r', encoding='utf-8') as f:
         categories.append(int(row['category']))
 
 CHARACTER_CATEGORY = 4
-CHARACTER_THRESHOLD = 0.5
-GENERAL_THRESHOLD = 0.3
+CHARACTER_THRESHOLD = 0.53  # threshold P=R recomendado especificamente pro eva02-large-tagger-v3
 
 session = ort.InferenceSession(model_path)
 input_name = session.get_inputs()[0].name
@@ -90,23 +91,16 @@ for idx, image_file in enumerate(sorted(waifu_dir.glob("*")), 1):
             if categories[i] == CHARACTER_CATEGORY and output[i] > CHARACTER_THRESHOLD
         ]
 
-        character_name = None
-        if character_tags:
-            char_indices = [i for i in range(len(tags)) if categories[i] == CHARACTER_CATEGORY]
-            best_idx = max(char_indices, key=lambda i: output[i])
-            character_name = tags[best_idx]
-            print(f"    Tags de personagem: {character_tags}")
-        else:
-            general_indices = [i for i in range(len(tags)) if categories[i] == 0]
-            top_indices = sorted(general_indices, key=lambda i: output[i], reverse=True)[:5]
-            for i in top_indices:
-                if output[i] > GENERAL_THRESHOLD:
-                    character_name = tags[i]
-                    break
-
-        if not character_name:
-            print("    Nao identificado")
+        if not character_tags:
+            # Sem tag de personagem confiavel: nao renomeia (evita nome enganoso
+            # tipo "1girl"). A imagem fica com o nome original pra revisao manual.
+            print("    Personagem nao identificado - mantendo nome original")
             continue
+
+        char_indices = [i for i in range(len(tags)) if categories[i] == CHARACTER_CATEGORY]
+        best_idx = max(char_indices, key=lambda i: output[i])
+        character_name = tags[best_idx]
+        print(f"    Tags de personagem: {character_tags}")
 
         clean_name = "".join(c if c.isalnum() or c in ('-', '_') else '' for c in character_name)
         clean_name = clean_name[:50]
