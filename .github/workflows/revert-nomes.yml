@@ -1,0 +1,38 @@
+name: Reverter nomes das fotos
+
+on:
+  workflow_dispatch:
+    inputs:
+      pasta:
+        description: 'Caminho da pasta das fotos'
+        required: true
+        default: 'caminho/da/pasta'
+
+jobs:
+  reverter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reverter último rename de cada arquivo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          PASTA="${{ github.event.inputs.pasta }}"
+          for arquivo in "$PASTA"/*; do
+            [ -f "$arquivo" ] || continue
+            LINHA=$(git log --diff-filter=R --follow --summary --pretty="format:%H" -- "$arquivo" | grep -A1 "^[a-f0-9]\{40\}$" | grep "rename" | head -n1)
+            if [ -n "$LINHA" ]; then
+              NOME_ANTIGO=$(echo "$LINHA" | sed -E 's/.*rename (.*)\{.* => (.*)\}(.*)/\1\2/' | xargs)
+              if [ -n "$NOME_ANTIGO" ] && [ -f "$NOME_ANTIGO" ] 2>/dev/null; then
+                echo "Já existe, pulando: $NOME_ANTIGO"
+              elif [ -n "$NOME_ANTIGO" ]; then
+                echo "Renomeando $arquivo -> $NOME_ANTIGO"
+                git mv "$arquivo" "$NOME_ANTIGO" || true
+              fi
+            fi
+          done
+          git commit -m "Revertendo último rename das fotos" || echo "Nada pra commitar"
+          git push
