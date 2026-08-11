@@ -6,7 +6,7 @@ on:
       pasta:
         description: 'Caminho da pasta das fotos'
         required: true
-        default: 'caminho/da/pasta'
+        default: 'waifu'
 
 jobs:
   reverter:
